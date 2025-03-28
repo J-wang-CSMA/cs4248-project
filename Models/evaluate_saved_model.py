@@ -274,7 +274,7 @@ def evaluate_model(model, sentences, labels, batch_size=32):
 # -----------------------------
 if __name__ == "__main__":
 
-    EVAL_CSV_FILE_PATH = 'path/to/your/evaluation_data.csv'
+    EVAL_CSV_FILE_PATH = '../Datasets/Sarcasm_Headlines_Dataset.csv'
 
     # SET PATH TO THE TRAINED MODEL CHECKPOINT
     MODEL_FILENAME = "bert_gcn_best_model.pth"
@@ -328,7 +328,7 @@ if __name__ == "__main__":
         print(f"Accuracy: {eval_accuracy:.4f}")
         print(f"F1 Score (Weighted): {eval_f1:.4f}")
         print("\nClassification Report:")
-        # Ensure target names match your label encoding (0: Non-Sarcastic, 1: Sarcastic)
+        # Ensure target names match label encoding (0: Non-Sarcastic, 1: Sarcastic)
         print(classification_report(true_labels, predictions, target_names=['Non-Sarcastic', 'Sarcastic'], zero_division=0))
 
         # --- Save Predictions to CSV ---
