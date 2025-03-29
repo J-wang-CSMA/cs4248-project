@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import re
 import string
+import os
 from sklearn.model_selection import train_test_split
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.feature_extraction.text import CountVectorizer
@@ -9,9 +10,13 @@ from sklearn.metrics import accuracy_score, classification_report
 from textblob import TextBlob
 
 # Load dataset
-CSV_FILE_PATH = '../Datasets/Sarcasm_Headlines_Dataset_v2.csv'
+CSV_FILE_PATH = os.path.join('Datasets', 'Sarcasm_Headlines_Dataset_v2.csv')
 FEATURE = 'headline'
 TARGET = 'is_sarcastic'
+
+# Check if file exists
+if not os.path.exists(CSV_FILE_PATH):
+    raise FileNotFoundError(f"File not found at: {os.path.abspath(CSV_FILE_PATH)}")
 
 # Read data
 df = pd.read_csv(CSV_FILE_PATH)
