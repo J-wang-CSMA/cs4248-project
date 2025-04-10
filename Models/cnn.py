@@ -3,7 +3,8 @@
 
 # import nltk
 # nltk.download('vader_lexicon')
-
+#incorporate word embeddings
+#im going to put N grams
 
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import f1_score
@@ -15,11 +16,11 @@ from nltk.corpus import stopwords
 from tqdm import tqdm
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 import torch
-from torch.nn.utils.rnn import pad_sequence
 import torch.nn as nn
 import torch.nn.functional as F
 from collections import defaultdict
 from sklearn.preprocessing import Normalizer
+from torch.utils.data import TensorDataset, DataLoader
 
 
 
@@ -68,7 +69,6 @@ def preprocess(text_col,stopword):
         # Replace "line feed" with "space".
         sent = sent.replace('\\n', ' ')
         # Replace characters between words with "space".
-        qwer = sent
         sent = re.sub('[^A-Za-z0-9]+', ' ', sent)
         #remove stop words
 
@@ -78,6 +78,7 @@ def preprocess(text_col,stopword):
            sent = ' '.join(e for e in sent.split())
         # to lowercase
         preprocessed.append(sent.lower().strip())
+
     return preprocessed
 
 def generate_sentiment_scores(data):
@@ -215,7 +216,7 @@ features = [COMPOUND, NEGATIVE, POSITIVE, NEUTRAL]
 
 # Hyperparameters
 RANDOM_SEED = 42
-MAX_LEN = 30
+MAX_LEN = 50
 VOCAB_SIZE = 50
 BATCH_SIZE = 512
 EPOCHS = 50000
@@ -227,7 +228,7 @@ data = pd.read_csv(CSV_FILE_PATH)
 
 data[FEATURE] = preprocess(data[FEATURE], stopword=False)
 data[COMPOUND], data[NEGATIVE], data[POSITIVE], data[NEUTRAL] = generate_sentiment_scores(data[FEATURE])
-# print(data.head())
+
 data[COM_LEN]=data[FEATURE].apply(lambda x:len(x.split()))
 labels = torch.tensor(data[TARGET].values, dtype=torch.long)
 one_hot_labels = torch.nn.functional.one_hot(labels, num_classes=2)
@@ -246,22 +247,54 @@ padded_train, padded_test, tokenizer = text_padding_torch(train_texts[FEATURE], 
 
 numerical_train, numerical_test = normalize_features(train_texts, test_texts, features)
 
+# convert labels to tensor
+train_labels_tensor = torch.tensor(train_labels, dtype=torch.float)
+test_labels_tensor = torch.tensor(test_labels, dtype=torch.float)
+numerical_train_tensor = torch.tensor(numerical_train, dtype=torch.float)
+numerical_test_tensor = torch.tensor(numerical_test, dtype=torch.float)
 
+
+# create train loader
+train_dataset = TensorDataset(padded_train, numerical_train_tensor, train_labels_tensor)
+train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+
+# Create modeal and make sure it is in evaluation mode
 model = DeepCNN1D()
-output = model(padded_train, torch.tensor(numerical_train, dtype=torch.float))
-
-
-# Ensure the model is in evaluation mode
 model.eval()
 
 # Convert test numerical features to tensor
-numerical_test_tensor = torch.tensor(numerical_test, dtype=torch.float)
 
-# Get model predictions
-with torch.no_grad():
-    outputs = model(padded_test, numerical_test_tensor)  # Forward pass
-    probabilities = F.softmax(outputs, dim=1)  # Convert logits to probabilities
-    predictions = torch.argmax(probabilities, dim=1)  # Get predicted class indices
+
+num_epochs = 10
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+criterion = nn.CrossEntropyLoss()
+for epoch in range(num_epochs):
+    print(epoch)
+    model.train()  # Set the model to training mode
+    for batch_text, batch_numerical, batch_labels in train_loader:
+        # print(batch_text.size(), batch_numerical.size(), batch_labels.size())
+        optimizer.zero_grad()
+        outputs = model(batch_text, batch_numerical)
+        loss = criterion(outputs, batch_labels)
+        loss.backward()
+        optimizer.step()
+    
+    # Optionally, evaluate on validation data after each epoch
+    model.eval()
+
+    with torch.no_grad():
+        test_outputs = model(padded_test, numerical_test_tensor)
+        test_loss = criterion(test_outputs, test_labels_tensor)
+        print(test_loss)
+        # Compute accuracy or other metrics here
+    
+    print(f"Epoch {epoch+1}/{num_epochs} - Training Loss: {loss.item():.4f}, Validation Loss: {test_loss.item():.4f}")
+
+# # Get model predictions
+# with torch.no_grad():
+#     outputs = model(padded_test, numerical_test_tensor)  # Forward pass
+probabilities = F.softmax(test_outputs, dim=1)  # Convert logits to probabilities
+predictions = torch.argmax(probabilities, dim=1)  # Get predicted class indices
 
 # Convert to NumPy for metric calculation
 predictions_np = predictions.cpu().numpy()
