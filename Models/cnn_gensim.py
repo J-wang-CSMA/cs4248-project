@@ -23,6 +23,8 @@ from sklearn.preprocessing import Normalizer
 from torch.utils.data import TensorDataset, DataLoader
 import gensim
 from nltk.tokenize import word_tokenize
+from sklearn.svm import SVC
+
 
 gensim_model = gensim.models.KeyedVectors.load_word2vec_format('../Datasets/GoogleNews-vectors-negative300.bin', binary=True)
 
@@ -174,13 +176,13 @@ def normalize_features(X_train, X_test, feature_names):
 
 
 class DeepCNN1D(nn.Module):
-    def __init__(self):
+    def __init__(self, dropout = 0.4):
         super(DeepCNN1D, self).__init__()
         
         # Embedding for input comment:
         # num_embeddings = vocabulary size, embedding_dim = chosen embedding dimension
         # self.embedding = nn.Embedding(num_embeddings=VOCAB_SIZE, embedding_dim=100, padding_idx=0)
-        # self.dropout = nn.Dropout(0.4)
+        self.dropout = nn.Dropout(dropout)
         
         # Convolutional and pooling layers for text
         # in_channels for conv1 must equal the embedding dimension
@@ -246,7 +248,8 @@ RANDOM_SEED = 42
 MAX_LEN = 50
 VOCAB_SIZE = 50
 BATCH_SIZE = 512
-EPOCHS = 50000
+EPOCHS = 30
+DROPOUT = 0.5
 
 
 # Load the data from CSV
@@ -288,52 +291,96 @@ numerical_test_tensor = torch.tensor(numerical_test, dtype=torch.float)
 train_dataset = TensorDataset(padded_train, numerical_train_tensor, train_labels_tensor)
 train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
 
-# Create modeal and make sure it is in evaluation mode
-model = DeepCNN1D()
-model.eval()
 
 # Convert test numerical features to tensor
 
 
-num_epochs = 10
-optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-criterion = nn.CrossEntropyLoss()
-for epoch in range(num_epochs):
-    print(epoch)
-    model.train()  # Set the model to training mode
-    for batch_text, batch_numerical, batch_labels in train_loader:
-        # print(batch_text.size(), batch_numerical.size(), batch_labels.size())
-        optimizer.zero_grad()
-        outputs = model(batch_text, batch_numerical)
-        loss = criterion(outputs, batch_labels)
-        loss.backward()
-        optimizer.step()
+
+results = {}
+learning_rates = [0.0001, 0.001, 0.01]
+epochs = [5, 10, 15]
+
+
     
-    # Optionally, evaluate on validation data after each epoch
-    model.eval()
-
-    with torch.no_grad():
-        test_outputs = model(padded_test, numerical_test_tensor)
-        test_loss = criterion(test_outputs, test_labels_tensor)
-        print(test_loss)
-        # Compute accuracy or other metrics here
+for learning_rate in learning_rates:
+    for num_of_epochs in epochs:
+        model = DeepCNN1D(dropout = DROPOUT)
+        
+        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+        criterion = nn.CrossEntropyLoss()
+        model.train()  # Set the model to training mode
+        
+        for epoch in range(num_of_epochs):
     
-    print(f"Epoch {epoch+1}/{num_epochs} - Training Loss: {loss.item():.4f}, Validation Loss: {test_loss.item():.4f}")
+            for batch_text, batch_numerical, batch_labels in train_loader:
+                # print(batch_text.size(), batch_numerical.size(), batch_labels.size())
+                optimizer.zero_grad()
+                outputs = model(batch_text, batch_numerical)
+                loss = criterion(outputs, batch_labels)
+                loss.backward()
+                optimizer.step()
+                
+            model.eval()
+            
+            with torch.no_grad():
+                test_outputs = model(padded_test, numerical_test_tensor)
+                test_loss = criterion(test_outputs, test_labels_tensor)
+                probabilities = F.softmax(test_outputs, dim=1)  # Convert logits to probabilities
+                predictions = torch.argmax(probabilities, dim=1)  # Get predicted class indices
+            
+            print(f"Epoch {epoch+1}/{EPOCHS} - Training Loss: {loss.item():.4f}, Validation Loss: {test_loss.item():.4f}")
+        
+    
+    
+        
+        # Convert to NumPy for metric calculation
+        predictions_np = predictions.cpu().numpy()
+        true_labels_np = test_labels.argmax(axis=1)  # Convert one-hot labels to class indices
+        
+        # Compute F1 score
+        f1 = f1_score(true_labels_np, predictions_np, average='weighted')  # Weighted for class imbalance
+        print(f"F1 Score: {f1:.4f}")
+        results[f"{epochs}, {learning_rate}"] = f1
+        
+        with torch.no_grad():
+        
+            def extract_features(model, text, numerical):
+                x1 = model.dropout(text)
+                x1 = x1.permute(0, 2, 1)
+                x1 = F.relu(model.conv1(x1))
+                x1 = model.pool1(x1)
+                x1 = F.relu(model.conv2(x1))
+                x1 = model.pool2(x1)
+                x1 = torch.flatten(x1, start_dim=1)
+                x2 = F.relu(model.fc_num(numerical))
+                x = torch.cat((x1, x2), dim=1)
+                x = F.relu(model.fc1(x))
+                x = F.relu(model.fc2(x))
+                x = F.relu(model.fc3(x))
+                x = F.relu(model.fc4(x))
+                return x
+            
+            train_features = extract_features(model, padded_train, numerical_train_tensor)
+            test_features = extract_features(model, padded_test, numerical_test_tensor)
+    
+            # Step 2: Convert tensors to numpy
+        X_train_svm = train_features.cpu().numpy()
+        y_train_svm = train_labels_tensor.argmax(dim=1).cpu().numpy()
+        
+        X_test_svm = test_features.cpu().numpy()
+        y_test_svm = test_labels_tensor.argmax(dim=1).cpu().numpy()
+        
+        # Step 3: Train SVM
+        svm = SVC(kernel='linear', C=1.0)
+        svm.fit(X_train_svm, y_train_svm)
+        
+        # Step 4: Predict and evaluate
+        y_pred = svm.predict(X_test_svm)
+        f1 = f1_score(true_labels_np, y_pred, average='weighted')  # Weighted for class imbalance
+    
+        print(f"F1 Score: {f1:.4f}")
 
-# # Get model predictions
-# with torch.no_grad():
-#     outputs = model(padded_test, numerical_test_tensor)  # Forward pass
-probabilities = F.softmax(test_outputs, dim=1)  # Convert logits to probabilities
-predictions = torch.argmax(probabilities, dim=1)  # Get predicted class indices
-
-# Convert to NumPy for metric calculation
-predictions_np = predictions.cpu().numpy()
-true_labels_np = test_labels.argmax(axis=1)  # Convert one-hot labels to class indices
-
-# Compute F1 score
-f1 = f1_score(true_labels_np, predictions_np, average='weighted')  # Weighted for class imbalance
-print(f"F1 Score: {f1:.4f}")
-
+print(results)
 
 # if __name__ == '__main__':
 #     main()
