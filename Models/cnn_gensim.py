@@ -18,7 +18,6 @@ from nltk.sentiment.vader import SentimentIntensityAnalyzer
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from collections import defaultdict
 from sklearn.preprocessing import Normalizer
 from torch.utils.data import TensorDataset, DataLoader
 import gensim
@@ -101,23 +100,6 @@ def generate_sentiment_scores(data):
         neu.append(sentence_sentiment_score[NEUTRAL])
     return comp,neg,pos,neu
 
-class CustomTokenizer:
-    def __init__(self, vocab_size=50000, oov_token="OOV"):
-        self.word_index = defaultdict(lambda: 1)  # Default to OOV index
-        self.index_word = {}
-        self.oov_token = oov_token
-        self.vocab_size = vocab_size
-        self.word_index[oov_token] = 1  # OOV token index
-
-    def fit_on_texts(self, texts):
-        words = set(word for sentence in texts for word in sentence.split())
-        words = list(words)[: self.vocab_size - 2]  # Limit vocab size
-        self.word_index.update({word: i+2 for i, word in enumerate(words)})  # Start at index 2
-        self.index_word = {i: word for word, i in self.word_index.items()}
-
-    def texts_to_sequences(self, texts):
-        return [[self.word_index[word] for word in sentence.split()] for sentence in texts]
-    
 def nltk_tokenize_gensim_vectorize(headlines, sentence_len):
     vectorized = []
     for headline in headlines:
@@ -137,7 +119,7 @@ def nltk_tokenize_gensim_vectorize(headlines, sentence_len):
         while len(vectors) < sentence_len:
             vectors.append(np.zeros(gensim_model.vector_size, dtype=np.float32))
         vectorized.append(np.array(vectors, dtype=np.float32))
-    return torch.tensor(vectorized, dtype=torch.float32)
+    return torch.tensor(np.array(vectorized), dtype=torch.float32)
     
 
 
@@ -154,12 +136,7 @@ def pad_text_torch(texts, tokenizer, max_len):
         padded_sequences.append(padded_seq)
     return torch.tensor(padded_sequences, dtype=torch.long)
 
-def text_padding_torch(train, test, max_len, vocab_size):
-    token = CustomTokenizer(vocab_size=vocab_size)
-    token.fit_on_texts(train)
-    padded_train_text = pad_text_torch(train, token, max_len)
-    padded_test_text = pad_text_torch(test, token, max_len)
-    return padded_train_text, padded_test_text, token
+
 
 def normalize_features(X_train, X_test, feature_names):
     """Normalizes multiple features independently using separate Normalizer instances."""
@@ -179,10 +156,8 @@ class DeepCNN1D(nn.Module):
     def __init__(self, dropout = 0.4):
         super(DeepCNN1D, self).__init__()
         
-        # Embedding for input comment:
-        # num_embeddings = vocabulary size, embedding_dim = chosen embedding dimension
-        # self.embedding = nn.Embedding(num_embeddings=VOCAB_SIZE, embedding_dim=100, padding_idx=0)
         self.dropout = nn.Dropout(dropout)
+
         
         # Convolutional and pooling layers for text
         # in_channels for conv1 must equal the embedding dimension
@@ -221,6 +196,8 @@ class DeepCNN1D(nn.Module):
 
         x = torch.cat((x1, x2), dim=1)  # (batch_size, 64+128=192)
 
+        x = self.dropout(x)
+        
         # Fully connected layers
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
@@ -281,8 +258,8 @@ padded_test = nltk_tokenize_gensim_vectorize(test_texts[FEATURE], MAX_LEN)
 numerical_train, numerical_test = normalize_features(train_texts, test_texts, features)
 
 # convert labels to tensor
-train_labels_tensor = torch.tensor(train_labels, dtype=torch.float)
-test_labels_tensor = torch.tensor(test_labels, dtype=torch.float)
+train_labels_tensor = torch.tensor(np.array(train_labels), dtype=torch.float)
+test_labels_tensor = torch.tensor(np.array(test_labels), dtype=torch.float)
 numerical_train_tensor = torch.tensor(numerical_train, dtype=torch.float)
 numerical_test_tensor = torch.tensor(numerical_test, dtype=torch.float)
 
@@ -300,7 +277,7 @@ results = {}
 learning_rates = [0.0001, 0.001, 0.01]
 epochs = [5, 10, 15]
 
-
+# winner 0.0001, 15
     
 for learning_rate in learning_rates:
     for num_of_epochs in epochs:
@@ -328,11 +305,10 @@ for learning_rate in learning_rates:
                 probabilities = F.softmax(test_outputs, dim=1)  # Convert logits to probabilities
                 predictions = torch.argmax(probabilities, dim=1)  # Get predicted class indices
             
-            print(f"Epoch {epoch+1}/{EPOCHS} - Training Loss: {loss.item():.4f}, Validation Loss: {test_loss.item():.4f}")
+            print(f"Epoch {epoch+1}/{num_of_epochs} - Training Loss: {loss.item():.4f}, Validation Loss: {test_loss.item():.4f}")
         
     
     
-        
         # Convert to NumPy for metric calculation
         predictions_np = predictions.cpu().numpy()
         true_labels_np = test_labels.argmax(axis=1)  # Convert one-hot labels to class indices
@@ -340,7 +316,7 @@ for learning_rate in learning_rates:
         # Compute F1 score
         f1 = f1_score(true_labels_np, predictions_np, average='weighted')  # Weighted for class imbalance
         print(f"F1 Score: {f1:.4f}")
-        results[f"{epochs}, {learning_rate}"] = f1
+        results[f"{num_of_epochs}, {learning_rate}" ] = f1
         
         with torch.no_grad():
         
