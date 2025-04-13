@@ -156,7 +156,6 @@ class DeepCNN1D(nn.Module):
     def __init__(self, dropout = 0.4):
         super(DeepCNN1D, self).__init__()
         
-        self.dropout = nn.Dropout(dropout)
 
         
         # Convolutional and pooling layers for text
@@ -169,6 +168,8 @@ class DeepCNN1D(nn.Module):
 
         # Fully connected layer for numerical input (assumes 4 numerical features)
         self.fc_num = nn.Linear(4, 128)
+        
+        self.dropout = nn.Dropout(dropout)
 
 
         self.fc1 = nn.Linear(64 + 128, 128)
@@ -180,7 +181,7 @@ class DeepCNN1D(nn.Module):
     def forward(self, input_comment, input_numerical):
         # Process text input through the embedding layer
         # x1 = self.embedding(input_comment)  # (batch_size, 50, 100)
-        x1 = self.dropout(input_comment)
+        x1 = input_comment
         x1 = x1.permute(0, 2, 1)  # (batch_size, 100, 50)
 
         x1 = F.relu(self.conv1(x1))  # (batch_size, 128, 43)
