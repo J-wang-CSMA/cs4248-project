@@ -3,9 +3,11 @@
 
 # import nltk
 # nltk.download('vader_lexicon')
-#incorporate word embeddings
-#im going to put N grams
+# nltk.download('punkt')
+# nltk.download('averaged_perceptron_tagger')
 
+
+from nrclex import NRCLex
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import f1_score
 
@@ -24,6 +26,8 @@ import gensim
 from nltk.tokenize import word_tokenize
 from sklearn.svm import SVC
 
+# Define the eight primary emotions from NRCLex
+emotions = ['anger', 'anticipation', 'disgust', 'fear', 'joy', 'sadness', 'surprise', 'trust']
 
 gensim_model = gensim.models.KeyedVectors.load_word2vec_format('../Datasets/GoogleNews-vectors-negative300.bin', binary=True)
 
@@ -92,6 +96,7 @@ def generate_sentiment_scores(data):
     pos=[]
     neu=[]
     comp=[]
+    
     for sentence in tqdm(data): 
         sentence_sentiment_score = sid.polarity_scores(sentence)
         comp.append(sentence_sentiment_score[COMPOUND])
@@ -99,6 +104,29 @@ def generate_sentiment_scores(data):
         pos.append(sentence_sentiment_score[POSITIVE])
         neu.append(sentence_sentiment_score[NEUTRAL])
     return comp,neg,pos,neu
+
+def generate_emotion_scores(data):
+
+    
+    
+    # Initialize a dictionary to hold lists for each emotion
+    emotion_scores = {emotion: [] for emotion in emotions}
+    
+    # Iterate over each text input
+    for sentence in tqdm(data, desc="Processing"):
+        # Create an NRCLex object for the sentence
+        emotion = NRCLex(sentence)
+        
+        # Retrieve the raw emotion scores
+        raw_scores = emotion.raw_emotion_scores
+        
+        # Append the score for each emotion to the corresponding list
+        for emotion_name in emotions:
+            score = raw_scores.get(emotion_name, 0)
+            emotion_scores[emotion_name].append(score)
+    
+    # Return the scores as a tuple in the order of the defined emotions
+    return tuple(emotion_scores[emotion] for emotion in emotions)
 
 def nltk_tokenize_gensim_vectorize(headlines, sentence_len):
     vectorized = []
@@ -166,11 +194,10 @@ class DeepCNN1D(nn.Module):
         self.conv2 = nn.Conv1d(in_channels=128, out_channels=64, kernel_size=4, stride=1, padding=0)
         self.pool2 = nn.MaxPool1d(kernel_size=4)
 
-        # Fully connected layer for numerical input (assumes 4 numerical features)
-        self.fc_num = nn.Linear(4, 128)
+        # Fully connected layer for numerical input 
+        self.fc_num = nn.Linear(len(features), 128)
         
         self.dropout = nn.Dropout(dropout)
-
 
         self.fc1 = nn.Linear(64 + 128, 128)
         self.fc2 = nn.Linear(128, 64)
@@ -219,7 +246,7 @@ NEGATIVE = "neg"
 POSITIVE = "pos"
 NEUTRAL = "neu"
 COM_LEN = "com_len"
-features = [COMPOUND, NEGATIVE, POSITIVE, NEUTRAL]
+features = [COMPOUND, NEGATIVE, POSITIVE, NEUTRAL, COM_LEN] + emotions
 
 # Hyperparameters
 RANDOM_SEED = 42
@@ -236,7 +263,10 @@ data = pd.read_csv(CSV_FILE_PATH)
 
 data[FEATURE] = preprocess(data[FEATURE], stopword=False)
 data[COMPOUND], data[NEGATIVE], data[POSITIVE], data[NEUTRAL] = generate_sentiment_scores(data[FEATURE])
-
+emotion_scores = generate_emotion_scores(data[FEATURE])
+for emotion, scores in zip(emotions, emotion_scores):
+    data[emotion] = scores
+    
 data[COM_LEN]=data[FEATURE].apply(lambda x:len(x.split()))
 labels = torch.tensor(data[TARGET].values, dtype=torch.long)
 one_hot_labels = torch.nn.functional.one_hot(labels, num_classes=2)
@@ -291,7 +321,6 @@ for learning_rate in learning_rates:
         for epoch in range(num_of_epochs):
     
             for batch_text, batch_numerical, batch_labels in train_loader:
-                # print(batch_text.size(), batch_numerical.size(), batch_labels.size())
                 optimizer.zero_grad()
                 outputs = model(batch_text, batch_numerical)
                 loss = criterion(outputs, batch_labels)
